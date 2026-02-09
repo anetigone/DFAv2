@@ -55,9 +55,9 @@ def get_default_config():
         },
 
         # ========== 保存和日志配置 ==========
-        'save_dir': './checkpoints/dfa_dun',
-        'log_dir': './logs/dfa_dun',
-        'exp_name': 'dfa_dun_all_in_one',
+        # 注意: save_dir 和 log_dir 已废弃,由 trainer 自动构建为 results/exp_name_timestamp/ 结构
+        'exp_name': 'dfa_dun',  # 实验名称
+        'timestamp': '',  # 时间戳 (空字符串表示使用当前时间戳)
         'save_interval': 10,
         'val_interval': 1,
         'log_interval': 10,
@@ -138,8 +138,7 @@ def validate_config(config):
 
     # 检查必需的键
     required_keys = [
-        'model', 'epochs', 'batch_size', 'lr',
-        'save_dir', 'log_dir', 'exp_name'
+        'model', 'epochs', 'batch_size', 'lr', 'exp_name'
     ]
 
     for key in required_keys:

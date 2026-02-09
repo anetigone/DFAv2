@@ -11,6 +11,7 @@ DFA-DUN 损失函数
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from .layers import fft_convolve
 
 
 class CharbonnierLoss(nn.Module):
@@ -189,6 +190,32 @@ class ParameterSupervisionLoss(nn.Module):
             loss = loss + self.lambda_D * F.l1_loss(pred_params['D'], gt_params['D'])
 
         return loss
+    
+class RedegradationLoss(nn.Module):
+    """
+    重退化损失
+
+    用于训练模型，计算退化后的图像与真值图像之间的差异
+    """
+    def __init__(self):
+        super(RedegradationLoss, self).__init__()
+
+    def forward(self, x, y, K, T, D):
+        """
+        Args:
+            x: 预测图像 [B, 3, H, W]
+            y: 真值图像 [B, 3, H, W]
+            K: 模糊核 [B, 1, H, W]
+            T: 透射率 [B, 1, H, W]
+            D: 偏置 [B, 3, H, W]
+        Returns:
+            loss: 标量
+        """        
+
+        y_hat = fft_convolve(x, K) * T + D
+        loss = F.l1_loss(y_hat, y)
+        
+        return loss
 
 
 class DFADUNLoss(nn.Module):
@@ -212,6 +239,7 @@ class DFADUNLoss(nn.Module):
         self,
         lambda_rec=1.0,
         lambda_freq=0.1,
+        lambda_consist=0.5,
         lambda_percep=0.05,
         lambda_param=0.0,
         use_parameter=False,
@@ -220,13 +248,15 @@ class DFADUNLoss(nn.Module):
         super(DFADUNLoss, self).__init__()
         self.lambda_rec = lambda_rec
         self.lambda_freq = lambda_freq
+        self.lambda_consist = lambda_consist
         self.lambda_percep = lambda_percep
         self.lambda_param = lambda_param
 
         # 初始化各个损失
         self.charbonnier = CharbonnierLoss(eps=1e-3)
         self.frequency = FrequencyLoss(use_amplitude=True, use_phase=False)
-        
+        self.redegradation = RedegradationLoss()
+
         self.use_parameter = use_parameter
         if use_parameter:
             self.param_supervision = ParameterSupervisionLoss(
@@ -265,7 +295,18 @@ class DFADUNLoss(nn.Module):
         loss_freq = self.frequency(pred_img, gt_img)
         loss_dict['loss_freq'] = loss_freq
 
-        # 3. 感知损失 (可选)
+        # 3. 重退化损失
+        if isinstance(pred_params, list):
+            degrade_params = pred_params[-1]  # 只使用最后阶段的参数进行重退化监督
+        else:
+            degrade_params = pred_params
+        loss_consist = self.redegradation(pred_img, gt_img,
+                                         degrade_params['K'],
+                                         degrade_params['T'],
+                                         degrade_params['D'])
+        loss_dict['loss_consist'] = loss_consist
+
+        # 4. 感知损失 (可选)
         if self.use_perceptual:
             loss_percep = self.perceptual(pred_img, gt_img)
             loss_dict['loss_percep'] = loss_percep
@@ -273,7 +314,7 @@ class DFADUNLoss(nn.Module):
             loss_percep = 0.0
             loss_dict['loss_percep'] = torch.tensor(0.0, device=pred_img.device)
 
-        # 4. 参数监督损失 (可选)
+        # 5. 参数监督损失 (可选)
         if gt_params is not None and pred_params is not None:
             # 如果 pred_params 是列表 (多阶段)，只监督最后一个阶段
             if isinstance(pred_params, list):
@@ -291,6 +332,7 @@ class DFADUNLoss(nn.Module):
         total_loss = (
             self.lambda_rec * loss_rec +
             self.lambda_freq * loss_freq +
+            self.lambda_consist * loss_consist +
             self.lambda_percep * loss_percep +
             self.lambda_param * loss_param
         )

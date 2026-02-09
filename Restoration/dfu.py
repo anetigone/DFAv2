@@ -9,6 +9,7 @@ DFU: Data Fidelity Unit
 import torch
 import torch.nn as nn
 import torch.fft
+import torch.nn.functional as F
 from .layers import safe_divide
 
 
@@ -36,131 +37,37 @@ class DFU(nn.Module):
             z_k: 数据保真后的结果 [B, C, H, W]
         """
         B, C, H, W = y.shape
-
-        # 提取参数
         K = params['K']       # [B, 1, kH, kW]
         T = params['T']       # [B, 1, H, W]
         D = params['D']       # [B, 1, H, W]
         rho = params['rho']   # [B, 1]
 
-        # 扩展 T 和 D 到所有通道
-        if T.shape[1] == 1:
-            T = T.expand(B, C, H, W)
-        if D.shape[1] == 1:
-            D = D.expand(B, C, H, W)
+        # 扩展维度
+        rho = rho.view(B, 1, 1, 1)
+        if T.shape[1] == 1: T = T.expand(B, C, H, W)
+        if D.shape[1] == 1: D = D.expand(B, C, H, W)
 
-        # 限制范围避免数值不稳定
-        T = torch.clamp(T, min=0.1, max=5.0)
-        D = torch.clamp(D, min=-1.0, max=1.0)
+        # 1. 预计算频域核 F(K)
+        # s=(H, W) 会自动处理补零填充 (Zero-padding)
+        F_K = torch.fft.rfft2(K, s=(H, W), norm='ortho')
+        F_K_conj = torch.conj(F_K)
 
-        # 计算解析解
-        z_k = self._hqs_analytical_solution(y, x_prev, K, T, D, rho)
+        # 2. 计算分子项: T ⊙ (K^T ⊗ (y - D))
+        y_minus_D = y - D
+        F_y_minus_D = torch.fft.rfft2(y_minus_D, norm='ortho')
+        # K^T ⊗ 在频域就是乘共轭
+        K_trans_y = torch.fft.irfft2(F_K_conj * F_y_minus_D, s=(H, W), norm='ortho')
+        numerator = T * K_trans_y + rho * x_prev
 
-        return z_k
+        # 3. 计算分母项: T^2 ⊙ (K^T ⊗ K ⊗ 1) + rho
+        # K^T ⊗ K 在频域是 |F(K)|^2
+        F_KK = F_K_conj * F_K
+        K_energy = torch.fft.irfft2(F_KK, s=(H, W), norm='ortho')
+        # 这里的 K_energy 描述了退化算子的空间增益分布
+        denominator = (T ** 2) * K_energy + rho
 
-    def _hqs_analytical_solution(self, y, x_prev, K, T, D, rho):
-        """
-        计算 HQS 解析解:
-        z_k = [T ⊙ (K^T ⊗ (y - D)) + rho * x_{k-1}] / [T^2 ⊙ (K^T ⊗ K) + rho]
+        # 4. 安全除法
+        z_k = numerator / (denominator + 1e-8)
 
-        使用 FFT 加速卷积运算
-        """
-        B, C, H, W = y.shape
-        device = y.device
-
-        # 1. 计算 y - D
-        y_minus_D = y - D  # [B, C, H, W]
-
-        # 2. 计算 K^T ⊗ (y - D) (转置卷积)
-        # 在频域中，转置卷积等于卷积的复共轭
-        K_trans_conv = self._fft_conv_transpose(y_minus_D, K)  # [B, C, H, W]
-
-        # 3. 计算分子第一项: T ⊙ (K^T ⊗ (y - D))
-        term1_numerator = T * K_trans_conv  # [B, C, H, W]
-
-        # 4. 计算分子第二项: rho * x_{k-1}
-        rho_expanded = rho.view(B, 1, 1, 1)
-        term2_numerator = rho_expanded * x_prev  # [B, C, H, W]
-
-        # 5. 计算分子: T ⊙ (K^T ⊗ (y - D)) + rho * x_{k-1}
-        numerator = term1_numerator + term2_numerator  # [B, C, H, W]
-
-        # 6. 计算分母第一项: K^T ⊗ K
-        # 创建一个全1的特征图来进行 K ⊗ K
-        ones_map = torch.ones(B, C, H, W, device=device)
-        K_self_conv = self._fft_conv(ones_map, K)  # [B, C, H, W]
-
-        # 7. 计算分母: T^2 ⊙ (K^T ⊗ K) + rho
-        T_squared = T ** 2
-        denominator = T_squared * K_self_conv + rho_expanded  # [B, C, H, W]
-
-        # 8. 安全除法
-        z_k = safe_divide(numerator, denominator, eps=1e-8)
-
-        # 9. 限制输出范围
-        z_k = torch.clamp(z_k, min=-1.0, max=1.0)
-
-        return z_k
-
-    def _fft_conv(self, x, kernel):
-        """
-        使用 FFT 进行卷积
-        x: [B, C, H, W]
-        kernel: [B, 1, kH, kW]
-        Returns: [B, C, H, W]
-        """
-        B, C, H, W = x.shape
-        kH, kW = kernel.shape[-2:]
-
-        # 填充
-        pad_h = kH // 2
-        pad_w = kW // 2
-        x_padded = torch.nn.functional.pad(x, (pad_w, pad_w, pad_h, pad_h), mode='reflect')
-
-        # FFT
-        x_fft = torch.fft.rfft2(x_padded.float(), norm='ortho')
-        kernel_fft = torch.fft.rfft2(kernel.float(), s=(x_padded.shape[-2], x_padded.shape[-1]), norm='ortho')
-
-        # 频域相乘
-        output_fft = x_fft * kernel_fft.conj()
-
-        # IFFT
-        output = torch.fft.irfft2(output_fft, norm='ortho')
-
-        # 裁剪
-        output = output[:, :, :H, :W]
-
-        return output.type_as(x)
-
-    def _fft_conv_transpose(self, x, kernel):
-        """
-        使用 FFT 进行转置卷积 (相关操作)
-        x: [B, C, H, W]
-        kernel: [B, 1, kH, kW]
-        Returns: [B, C, H, W]
-        """
-        B, C, H, W = x.shape
-        kH, kW = kernel.shape[-2:]
-
-        # 翻转 kernel (转置卷积 = 翻转后的卷积)
-        kernel_flipped = torch.flip(kernel, dims=[-2, -1])
-
-        # 填充
-        pad_h = kH // 2
-        pad_w = kW // 2
-        x_padded = torch.nn.functional.pad(x, (pad_w, pad_w, pad_h, pad_h), mode='reflect')
-
-        # FFT
-        x_fft = torch.fft.rfft2(x_padded.float(), norm='ortho')
-        kernel_fft = torch.fft.rfft2(kernel_flipped.float(), s=(x_padded.shape[-2], x_padded.shape[-1]), norm='ortho')
-
-        # 频域相乘
-        output_fft = x_fft * kernel_fft.conj()
-
-        # IFFT
-        output = torch.fft.irfft2(output_fft, norm='ortho')
-
-        # 裁剪
-        output = output[:, :, :H, :W]
-
-        return output.type_as(x)
+        # 5. 范围约束 (针对图像恢复，通常在 -1 到 1 或 0 到 1)
+        return torch.clamp(z_k, min=-1.0, max=1.0)

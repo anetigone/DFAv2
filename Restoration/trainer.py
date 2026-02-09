@@ -48,11 +48,24 @@ class DFADUNTrainer:
         # 配置
         self.config = config
         self.num_epochs = config.get('epochs', 100)
-        self.save_dir = config.get('save_dir', './checkpoints')
-        self.log_dir = config.get('log_dir', './logs')
 
-        # 创建保存目录
+        # 创建实验目录结构: results/exp_name_timestamp/checkpoints 和 results/exp_name_timestamp/log
+        exp_name = config.get('exp_name', 'dfa_dun')
+        timestamp = config.get('timestamp', '')
+
+        if not timestamp:
+            from datetime import datetime
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+
+        self.exp_dir_name = f"{exp_name}_{timestamp}"
+        self.exp_dir = os.path.join('./results', self.exp_dir_name)
+
+        self.save_dir = os.path.join(self.exp_dir, 'checkpoints')
+        self.log_dir = os.path.join(self.exp_dir, 'log')
+
+        # 创建目录结构
         os.makedirs(self.save_dir, exist_ok=True)
+        os.makedirs(self.log_dir, exist_ok=True)
 
         # 损失函数
         self.criterion = DFADUNLoss(
@@ -121,8 +134,8 @@ class DFADUNTrainer:
         if logger is None:
             self.logger = TrainingLogger(
                 log_dir=self.log_dir,
-                exp_name=config.get('exp_name', 'dfa_dun'),
-                create_exp_subdir=True
+                exp_name=None,  # 不再创建额外的子目录
+                create_exp_subdir=False
             )
         else:
             self.logger = logger
@@ -171,10 +184,10 @@ class DFADUNTrainer:
             if self.use_amp:
                 with autocast("cuda"):
                     # 模型输出
-                    output = self.model(img_degraded)
+                    output, params = self.model(img_degraded)
 
                     # 计算损失
-                    loss, loss_dict = self.criterion(output, img_gt)
+                    loss, loss_dict = self.criterion(output, img_gt, pred_params=params)
 
                 # 反向传播
                 self.scaler.scale(loss).backward()
@@ -191,8 +204,8 @@ class DFADUNTrainer:
                 self.scaler.update()
             else:
                 # 不使用混合精度
-                output = self.model(img_degraded)
-                loss, loss_dict = self.criterion(output, img_gt)
+                output, params = self.model(img_degraded)
+                loss, loss_dict = self.criterion(output, img_gt, pred_params=params)
 
                 loss.backward()
 
@@ -213,7 +226,8 @@ class DFADUNTrainer:
             metrics = {
                 'loss': loss.item(),
                 'loss_rec': loss_dict['loss_rec'].item(),
-                'loss_freq': loss_dict['loss_freq'].item()
+                'loss_freq': loss_dict['loss_freq'].item(),
+                'loss_consist': loss_dict['loss_consist'].item()
             }
 
             if self.criterion.use_perceptual:
@@ -222,16 +236,14 @@ class DFADUNTrainer:
             if self.criterion.use_parameter:
                 metrics['loss_param'] = loss_dict['loss_param'].item()
 
-            if self.criterion.lambda_param > 0:
-                metrics['loss_param'] = loss_dict['loss_param'].item()
-
             metrics_tracker.update(metrics, n=img_degraded.size(0))
 
             # 更新进度条
             pbar.set_postfix({
                 'Loss': f"{loss.item():.4f}",
                 'Rec': f"{loss_dict['loss_rec'].item():.4f}",
-                'Freq': f"{loss_dict['loss_freq'].item():.4f}"
+                'Freq': f"{loss_dict['loss_freq'].item():.4f}",
+                'Consist': f"{loss_dict['loss_consist'].item():.4f}"
             })
 
             # 记录日志
@@ -281,10 +293,10 @@ class DFADUNTrainer:
                 img_gt = img_gt.to(self.device)
 
             # 前向传播
-            output = self.model(img_degraded)
+            output, params = self.model(img_degraded)
 
             # 计算损失
-            loss, loss_dict = self.criterion(output, img_gt)
+            loss, loss_dict = self.criterion(output, img_gt, pred_params=params)
 
             # 计算 PSNR
             mse = torch.mean((output - img_gt) ** 2)
@@ -340,7 +352,8 @@ class DFADUNTrainer:
             'config': self.config
         }, checkpoint_path)
 
-        self.logger.logger.info(f"检查点已保存: {checkpoint_path}")
+        # 记录相对路径，更简洁
+        self.logger.logger.info(f"检查点已保存: {filename}")
 
     def load_checkpoint(self, checkpoint_path):
         """
@@ -363,7 +376,9 @@ class DFADUNTrainer:
         if checkpoint.get('epoch') is not None:
             self.current_epoch = checkpoint['epoch']
 
-        self.logger.logger.info(f"检查点已加载: {checkpoint_path}")
+        # 使用相对路径显示
+        checkpoint_name = os.path.basename(checkpoint_path)
+        self.logger.logger.info(f"检查点已加载: {checkpoint_name}")
         self.logger.logger.info(f"最佳 PSNR: {self.best_psnr:.4f}")
 
     def train(self):

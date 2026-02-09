@@ -17,11 +17,11 @@ class TrainingLogger:
         """
         Args:
             log_dir: 日志保存目录
-            exp_name: 实验名称,如果为None则自动生成时间戳
+            exp_name: 实验名称 (已废弃,仅用于日志记录器名称)
             create_exp_subdir: 是否创建实验子目录 (默认False,直接使用log_dir)
         """
         self.log_dir = Path(log_dir)
-        self.exp_name = exp_name or f"exp_{time.strftime('%Y%m%d_%H%M%S')}"
+        self.exp_name = exp_name or "training"
 
         # 根据参数决定是否创建实验子目录
         if create_exp_subdir:
@@ -67,7 +67,8 @@ class TrainingLogger:
         # 3. 保存配置
         self.config_file = self.exp_dir / 'config.json'
 
-        self.logger.info(f"实验目录: {self.exp_dir}")
+        # 记录日志目录
+        self.logger.info(f"日志目录: {self.exp_dir}")
 
     def log_config(self, config):
         """保存训练配置"""

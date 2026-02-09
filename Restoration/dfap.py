@@ -210,8 +210,8 @@ class GainPredictor(nn.Module):
         gain = self.conv(feat)
         # 上采样
         gain = F.interpolate(gain, size=(H, W), mode='bilinear', align_corners=False)
-        # 缩放到合理范围 [0.5, 2.0]
-        gain = gain * 1.5 + 0.5
+        # 缩放到合理范围
+        gain = torch.exp(gain * 2.0 - 1.0)  # [exp(-1), exp(1)] ≈ [0.37, 2.72]
         return gain
 
 
@@ -257,8 +257,8 @@ class RhoPredictor(nn.Module):
         Returns: [B, 1]
         """
         rho = self.mlp(feat)
-        # 限制范围 [0.1, 5.0]
-        rho = torch.clamp(rho, min=0.1, max=5.0)
+        # 限制范围 [0.1, 1.0]
+        rho = F.sigmoid(rho) * 0.9 + 0.1
         return rho
 
 

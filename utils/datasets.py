@@ -256,48 +256,39 @@ if __name__ == "__main__":
     """
     # 测试 Rain100L 数据集
     print("测试 Rain100L 数据集:")
-    try:
-        rain100l_train = create_dataloader(
-            dataset_type='Rain100L',
-            root_dir='./data/Rain100L/train',
-            batch_size=4,
-            patch_size=256,
-            is_train=True,
-            num_workers=0,
-            max_samples=10  # 测试时只加载10张图片
-        )
-
-        # 测试加载一个批次
-        for batch in rain100l_train:
-            rainy, gt, task_label, dummy_kernel = batch
-            print(f"  Rainy shape: {rainy.shape}")
-            print(f"  GT shape: {gt.shape}")
-            print(f"  Task label: {task_label}")
-            print(f"  Dummy kernel shape: {dummy_kernel.shape}")
-            break
-    except Exception as e:
-        print(f"  加载失败: {e}")
-
+    rain100l_train = create_dataloader(
+        dataset_type='Rain100L',
+        root_dir='./data/Rain100L/train',
+        batch_size=4,
+        patch_size=256,
+        is_train=True,
+        num_workers=0,
+        max_samples=10  # 测试时只加载10张图片
+    )
+    # 测试加载一个批次
+    for batch in rain100l_train:
+        rainy, gt, task_label, dummy_kernel = batch
+        print(f"  Rainy shape: {rainy.shape}")
+        print(f"  GT shape: {gt.shape}")
+        print(f"  Task label: {task_label}")
+        print(f"  Dummy kernel shape: {dummy_kernel.shape}")
     # 测试 Rain100H 数据集
     print("\n测试 Rain100H 数据集:")
-    try:
-        rain100h_train = create_dataloader(
-            dataset_type='Rain100H',
-            root_dir='./data/Rain100H/train',
-            batch_size=4,
-            patch_size=256,
-            is_train=True,
-            num_workers=0,
-            max_samples=10
-        )
+    rain100h_train = create_dataloader(
+        dataset_type='Rain100H',
+        root_dir='./data/Rain100H/train',
+        batch_size=4,
+        patch_size=256,
+        is_train=True,
+        num_workers=0,
+        max_samples=10
+    )
 
-        # 测试加载一个批次
-        for batch in rain100h_train:
-            rainy, gt, task_label, dummy_kernel = batch
-            print(f"  Rainy shape: {rainy.shape}")
-            print(f"  GT shape: {gt.shape}")
-            print(f"  Task label: {task_label}")
-            print(f"  Dummy kernel shape: {dummy_kernel.shape}")
-            break
-    except Exception as e:
-        print(f"  加载失败: {e}")
+    # 测试加载一个批次
+    for batch in rain100h_train:
+        rainy, gt, task_label, dummy_kernel = batch
+        print(f"  Rainy shape: {rainy.shape}")
+        print(f"  GT shape: {gt.shape}")
+        print(f"  Task label: {task_label}")
+        print(f"  Dummy kernel shape: {dummy_kernel.shape}")
+        break

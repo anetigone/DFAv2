@@ -100,17 +100,15 @@ class DFADUN(nn.Module):
                 # 保留缩放参数的初始值
                 pass
 
-    def forward(self, y, return_params=False):
+    def forward(self, y):
         """
         前向传播
 
         Args:
             y: 退化图像 [B, 3, H, W]
-            return_params: 是否返回中间参数 (用于可视化或分析)
 
         Returns:
             x: 恢复图像 [B, 3, H, W]
-            all_params: (可选) 所有阶段的参数列表
         """
         # 初始化
         x = y  # 初始恢复图 = 退化图
@@ -128,10 +126,8 @@ class DFADUN(nn.Module):
             # 3. FMD: 频率调制深度恢复
             x = self.fmd_list[stage_idx](z_k, params)
 
-        if return_params:
-            return x, all_params
-        else:
-            return x
+        return x, all_params
+
 
     def get_stage_output(self, y, stage_idx):
         """
